@@ -3,12 +3,16 @@ package moe.shizuku.manager.home
 import android.Manifest.permission.WRITE_SECURE_SETTINGS
 import android.app.Dialog
 import android.content.ActivityNotFoundException
+import android.content.ComponentName
+import android.content.Context
 import android.content.DialogInterface
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.provider.Settings
+import android.widget.Toast
 import androidx.annotation.RequiresApi
 import androidx.appcompat.app.AlertDialog
 import androidx.fragment.app.DialogFragment
@@ -58,6 +62,33 @@ class AdbDialogFragment : DialogFragment() {
         adbMdns.stop()
     }
 
+    private fun openAndroidSettings(context: Context) {
+        val intent = Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
+            data = Uri.parse("package:com.android.settings")
+            setPackage("com.android.settings")
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
+        }
+        try {
+            context.startActivity(intent)
+        } catch (e: Exception) {
+            val fallback = Intent(Settings.ACTION_SETTINGS).apply {
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            }
+            try {
+                context.startActivity(fallback)
+            } catch (e2: Exception) {
+            }
+        }
+    }
+
+    private fun isDevOptionsEnabled(context: Context): Boolean {
+        return Settings.Global.getInt(
+            context.contentResolver,
+            Settings.Global.DEVELOPMENT_SETTINGS_ENABLED,
+            0
+        ) != 0
+    }
+
     private fun onDialogShow(dialog: AlertDialog) {
         adbMdns.start()
         val context = dialog.context
@@ -68,13 +99,33 @@ class AdbDialogFragment : DialogFragment() {
             Settings.Global.putLong(cr, "adb_allowed_connection_time", 0L)
         }
 
-        dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
-            val intent = Intent(Settings.ACTION_APPLICATION_DEVELOPMENT_SETTINGS)
-            intent.flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK
-            intent.putExtra(":settings:fragment_args_key", "toggle_adb_wireless")
-            try {
-                it.context.startActivity(intent)
-            } catch (_: ActivityNotFoundException) {
+        val positiveBtn = dialog.getButton(AlertDialog.BUTTON_POSITIVE)
+        if (!isDevOptionsEnabled(context)) {
+            positiveBtn.setText(R.string.settings_button_text)
+            positiveBtn.setOnClickListener {
+                openAndroidSettings(it.context)
+            }
+        } else {
+            positiveBtn.setText(R.string.development_settings)
+            positiveBtn.setOnClickListener {
+                val ctx = it.context
+                val intent = Intent().apply {
+                    component = ComponentName("com.android.settings", "com.android.settings.Settings\$DevelopmentSettingsDashboardActivity")
+                    flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK
+                    putExtra(":settings:fragment_args_key", "toggle_adb_wireless")
+                }
+                try {
+                    ctx.startActivity(intent)
+                } catch (_: Throwable) {
+                    val fallbackIntent = Intent(Settings.ACTION_APPLICATION_DEVELOPMENT_SETTINGS).apply {
+                        flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK
+                        putExtra(":settings:fragment_args_key", "toggle_adb_wireless")
+                    }
+                    try {
+                        ctx.startActivity(fallbackIntent)
+                    } catch (_: Throwable) {
+                    }
+                }
             }
         }
 

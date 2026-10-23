@@ -48,6 +48,8 @@
     <string name="home_root_description">В дополнение, Shizuku может запускаться сразу после загрузки системы. Если этого не происходит, проверьте, нет ли ограничений со стороны вашей системы или сторонних инструментов.&lt;br&gt;Вы можете обратиться в %s.</string>
     <string name="home_root_title">Запуск (для устройств с root правами)</string>
     <string name="development_settings">Параметры разработчика</string>
+    <string name="settings_button_text">Параметры</string>
+    <string name="adb_pairing_dev_options_disabled_instruction">Параметры разработчика отключены. Чтобы их включить: нажмите «Параметры» ниже, спуститесь ниже к разделу «О устройстве» и нажмите 5 раз по «Номер сборки». Затем вернитесь назад в «Система» -> «Параметры разработчика» и включите там «Отладка по Wi-Fi».</string>
     <string name="adb_pair_required">Пожалуйста, сперва пройдите процедуру сопряжения.</string>
     <string name="adb_error_key_store">Не удалось сгенерировать ключ для отладки по Wi-Fi.
 \nВозможно, что механизм KeyStore у данного устройства нерабочий.</string>
@@ -104,7 +106,7 @@
     <string name="home_wireless_adb_description">На Android 11 или выше Вы можете включить отладку по Wi-Fi без дополнительного ПО, без подключения к компьютеру. Пожалуйста, сперва просмотрите инструкцию</string>
     <string name="adb_pairing_tutorial_content_miui">На оболочке MIUI может потребоваться сменить параметр в пункте системных настроек «Уведомления» – «Стиль уведомлений» на «Android».</string>
     <string name="adb_pairing_tutorial_content_steps">Перейдите в «Параметры разработчика» – «Отладка по Wi-Fi». Нажмите на «Сопряжение устройства с помощью кода сопряжения» и увидите шестизначный код.</string>
-    <string name="adb_pairing_tutorial_content_enter_pairing_code">Введите код в уведомление для завершения процедуры сопряжения.</string>
+    <string name="adb_pairing_tutorial_content_enter_pairing_code">Введите код сопряжения и порт ниже для завершения процедуры сопряжения.</string>
     <string name="adb_pairing_tutorial_content_notification">Уведомление от Shizuku поможет завершить процедуру сопряжения.</string>
     <string name="rish_description">Посредством %1$s из любого приложения-терминала можно подключаться и взаимодействовать с shell, запущенной Shizuku. &lt;p&gt;Нажмите здесь для просмотра инструкции по работе с %1$s.</string>
     <string name="notification_adb_pairing_working_title">Выполняется сопряжение</string>

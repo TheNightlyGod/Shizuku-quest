@@ -3,8 +3,10 @@ package moe.shizuku.manager.home
 import android.annotation.SuppressLint
 import android.app.Dialog
 import android.content.ActivityNotFoundException
+import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
+import android.net.Uri
 import android.os.Build.VERSION_CODES
 import android.os.Bundle
 import android.provider.Settings
@@ -54,6 +56,33 @@ class AdbPairDialogFragment : DialogFragment() {
         return dialog
     }
 
+    private fun isDevOptionsEnabled(context: Context): Boolean {
+        return Settings.Global.getInt(
+            context.contentResolver,
+            Settings.Global.DEVELOPMENT_SETTINGS_ENABLED,
+            0
+        ) != 0
+    }
+
+    private fun openAndroidSettings(context: Context) {
+        val intent = Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
+            data = Uri.parse("package:com.android.settings")
+            setPackage("com.android.settings")
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
+        }
+        try {
+            context.startActivity(intent)
+        } catch (e: Exception) {
+            val fallback = Intent(Settings.ACTION_SETTINGS).apply {
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            }
+            try {
+                context.startActivity(fallback)
+            } catch (e2: Exception) {
+            }
+        }
+    }
+
     private fun onDialogShow(dialog: AlertDialog) {
         binding.pairingCode.editText!!.doAfterTextChanged {
             binding.pairingCode.error = null
@@ -63,13 +92,34 @@ class AdbPairDialogFragment : DialogFragment() {
 
         dialog.getButton(AlertDialog.BUTTON_POSITIVE).isVisible = false
 
-        dialog.getButton(AlertDialog.BUTTON_NEUTRAL).setOnClickListener {
-            val intent = Intent(Settings.ACTION_APPLICATION_DEVELOPMENT_SETTINGS)
-            intent.flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK
-            intent.putExtra(":settings:fragment_args_key", "toggle_adb_wireless")
-            try {
-                it.context.startActivity(intent)
-            } catch (e: ActivityNotFoundException) {
+        val neutralBtn = dialog.getButton(AlertDialog.BUTTON_NEUTRAL)
+        val context = dialog.context
+        if (!isDevOptionsEnabled(context)) {
+            neutralBtn.setText(R.string.settings_button_text)
+            neutralBtn.setOnClickListener {
+                openAndroidSettings(it.context)
+            }
+        } else {
+            neutralBtn.setText(R.string.development_settings)
+            neutralBtn.setOnClickListener {
+                val ctx = it.context
+                val intent = Intent().apply {
+                    component = ComponentName("com.android.settings", "com.android.settings.Settings\$DevelopmentSettingsDashboardActivity")
+                    flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK
+                    putExtra(":settings:fragment_args_key", "toggle_adb_wireless")
+                }
+                try {
+                    ctx.startActivity(intent)
+                } catch (_: Throwable) {
+                    val fallbackIntent = Intent(Settings.ACTION_APPLICATION_DEVELOPMENT_SETTINGS).apply {
+                        flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK
+                        putExtra(":settings:fragment_args_key", "toggle_adb_wireless")
+                    }
+                    try {
+                        ctx.startActivity(fallbackIntent)
+                    } catch (_: Throwable) {
+                    }
+                }
             }
         }
 

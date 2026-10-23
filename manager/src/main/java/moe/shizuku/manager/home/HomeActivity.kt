@@ -1,15 +1,21 @@
 package moe.shizuku.manager.home
 
+import android.Manifest.permission.WRITE_SECURE_SETTINGS
 import android.content.DialogInterface
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.os.Bundle
 import android.os.Process
+import android.provider.Settings
 import android.text.method.LinkMovementMethod
 import android.util.TypedValue
 import android.view.LayoutInflater
 import android.view.Menu
 import android.view.MenuItem
 import com.google.android.material.dialog.MaterialAlertDialogBuilder
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.GlobalScope
+import kotlinx.coroutines.launch
 import moe.shizuku.manager.R
 import moe.shizuku.manager.ShizukuSettings
 import moe.shizuku.manager.app.AppBarActivity
@@ -19,6 +25,8 @@ import moe.shizuku.manager.ktx.toHtml
 import moe.shizuku.manager.management.appsViewModel
 import moe.shizuku.manager.settings.SettingsActivity
 import moe.shizuku.manager.utils.AppIconCache
+import moe.shizuku.manager.utils.ShizukuSystemApis
+import moe.shizuku.manager.utils.UserHandleCompat
 import rikka.core.ktx.unsafeLazy
 import rikka.lifecycle.Status
 import rikka.lifecycle.viewModels
@@ -32,6 +40,7 @@ abstract class HomeActivity : AppBarActivity() {
     private val binderReceivedListener = Shizuku.OnBinderReceivedListener {
         checkServerStatus()
         appsModel.load()
+        grantSecureSettingsAndEnableDevOptions()
     }
 
     private val binderDeadListener = Shizuku.OnBinderDeadListener {
@@ -78,6 +87,41 @@ abstract class HomeActivity : AppBarActivity() {
 
     private fun checkServerStatus() {
         homeModel.reload()
+        if (Shizuku.pingBinder()) {
+            grantSecureSettingsAndEnableDevOptions()
+        }
+    }
+
+    private fun grantSecureSettingsAndEnableDevOptions() {
+        if (!Shizuku.pingBinder()) return
+        GlobalScope.launch(Dispatchers.IO) {
+            try {
+                ShizukuSystemApis.grantRuntimePermission(
+                    packageName,
+                    WRITE_SECURE_SETTINGS,
+                    UserHandleCompat.myUserId()
+                )
+            } catch (e: Throwable) {
+                e.printStackTrace()
+            }
+            try {
+                val process = Shizuku.newProcess(
+                    arrayOf("sh", "-c", "pm grant $packageName android.permission.WRITE_SECURE_SETTINGS && settings put global development_settings_enabled 1"),
+                    null,
+                    null
+                )
+                process.waitFor()
+            } catch (e: Throwable) {
+                e.printStackTrace()
+            }
+            try {
+                if (checkSelfPermission(WRITE_SECURE_SETTINGS) == PackageManager.PERMISSION_GRANTED) {
+                    Settings.Global.putInt(contentResolver, Settings.Global.DEVELOPMENT_SETTINGS_ENABLED, 1)
+                }
+            } catch (e: Throwable) {
+                e.printStackTrace()
+            }
+        }
     }
 
     override fun onDestroy() {

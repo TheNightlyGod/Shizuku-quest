@@ -1,122 +1,241 @@
 package moe.shizuku.manager.adb
 
-import android.app.AppOpsManager
-import android.app.ForegroundServiceStartNotAllowedException
-import android.app.NotificationManager
-import android.content.ActivityNotFoundException
+import android.content.ComponentName
+import android.content.Context
 import android.content.Intent
+import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.provider.Settings
-import android.util.Log
+import android.view.inputmethod.InputMethodManager
 import android.widget.Toast
 import androidx.annotation.RequiresApi
 import androidx.core.view.isGone
 import androidx.core.view.isVisible
-import moe.shizuku.manager.AppConstants
+import androidx.core.widget.doAfterTextChanged
+import androidx.lifecycle.lifecycleScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import moe.shizuku.manager.R
+import moe.shizuku.manager.ShizukuSettings
 import moe.shizuku.manager.app.AppBarActivity
 import moe.shizuku.manager.databinding.AdbPairingTutorialActivityBinding
-import rikka.compatibility.DeviceCompatibility
+import java.net.ConnectException
 
 @RequiresApi(Build.VERSION_CODES.R)
 class AdbPairingTutorialActivity : AppBarActivity() {
 
     private lateinit var binding: AdbPairingTutorialActivityBinding
-
-    private var notificationEnabled: Boolean = false
+    private var adbMdns: AdbMdns? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        val context = this
 
         binding = AdbPairingTutorialActivityBinding.inflate(layoutInflater)
         setContentView(binding.root)
         supportActionBar?.setDisplayHomeAsUpEnabled(true)
 
-        notificationEnabled = isNotificationEnabled()
-
-        if (notificationEnabled) {
-            startPairingService()
-        }
-
         binding.apply {
-            syncNotificationEnabled()
+            updateDevOptionsState()
 
-            if (DeviceCompatibility.isMiui()) {
-                miui.isVisible = true
+            pairingCode.editText?.doAfterTextChanged {
+                pairingCode.error = null
+            }
+            port.editText?.doAfterTextChanged {
+                port.error = null
             }
 
-            developerOptions.setOnClickListener {
-                val intent = Intent(Settings.ACTION_APPLICATION_DEVELOPMENT_SETTINGS)
-                intent.flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK
-                intent.putExtra(":settings:fragment_args_key", "toggle_adb_wireless")
-                try {
-                    context.startActivity(intent)
-                } catch (e: ActivityNotFoundException) {
+            buttonPair.setOnClickListener {
+                onPairClicked()
+            }
+        }
+    }
+
+    private fun isDevOptionsEnabled(context: Context): Boolean {
+        return Settings.Global.getInt(
+            context.contentResolver,
+            Settings.Global.DEVELOPMENT_SETTINGS_ENABLED,
+            0
+        ) != 0
+    }
+
+    private fun updateDevOptionsState() {
+        val enabled = isDevOptionsEnabled(this)
+        binding.apply {
+            if (enabled) {
+                developerOptions.text = getString(R.string.development_settings)
+                devOptionsDisabledCard.isGone = true
+                step1ClickableNotice.isVisible = true
+                developerOptions.setOnClickListener {
+                    val intent = Intent().apply {
+                        component = ComponentName("com.android.settings", "com.android.settings.Settings\$DevelopmentSettingsDashboardActivity")
+                        flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK
+                        putExtra(":settings:fragment_args_key", "toggle_adb_wireless")
+                    }
+                    try {
+                        startActivity(intent)
+                    } catch (e: Throwable) {
+                        val fallbackIntent = Intent(Settings.ACTION_APPLICATION_DEVELOPMENT_SETTINGS).apply {
+                            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK
+                            putExtra(":settings:fragment_args_key", "toggle_adb_wireless")
+                        }
+                        try {
+                            startActivity(fallbackIntent)
+                        } catch (e2: Throwable) {
+                        }
+                    }
                 }
-            }
-
-            notificationOptions.setOnClickListener {
-                val intent = Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS)
-                intent.putExtra(Settings.EXTRA_APP_PACKAGE, context.packageName)
-                try {
-                    context.startActivity(intent)
-                } catch (e: ActivityNotFoundException) {
+            } else {
+                developerOptions.text = getString(R.string.settings_button_text)
+                devOptionsDisabledCard.isVisible = true
+                step1ClickableNotice.isGone = true
+                developerOptions.setOnClickListener {
+                    openAndroidSettings(this@AdbPairingTutorialActivity)
                 }
             }
         }
     }
 
-    private fun syncNotificationEnabled() {
-        binding.apply {
-            step1.isVisible = notificationEnabled
-            step2.isVisible = notificationEnabled
-            step3.isVisible = notificationEnabled
-            network.isVisible = notificationEnabled
-            notification.isVisible = notificationEnabled
-            notificationDisabled.isGone = notificationEnabled
+    private fun openAndroidSettings(context: Context) {
+        val intent = Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
+            data = Uri.parse("package:com.android.settings")
+            setPackage("com.android.settings")
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
         }
-    }
-
-    private fun isNotificationEnabled(): Boolean {
-        val context = this
-
-        val nm = context.getSystemService(NotificationManager::class.java)
-        val channel = nm.getNotificationChannel(AdbPairingService.notificationChannel)
-        return nm.areNotificationsEnabled() &&
-                (channel == null || channel.importance != NotificationManager.IMPORTANCE_NONE)
+        try {
+            context.startActivity(intent)
+        } catch (e: Exception) {
+            val fallback = Intent(Settings.ACTION_SETTINGS).apply {
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            }
+            try {
+                context.startActivity(fallback)
+            } catch (e2: Exception) {
+            }
+        }
     }
 
     override fun onResume() {
         super.onResume()
+        updateDevOptionsState()
+    }
 
-        val newNotificationEnabled = isNotificationEnabled()
-        if (newNotificationEnabled != notificationEnabled) {
-            notificationEnabled = newNotificationEnabled
-            syncNotificationEnabled()
+    override fun onStart() {
+        super.onStart()
+        startMdns()
+    }
 
-            if (newNotificationEnabled) {
-                startPairingService()
-            }
+    override fun onStop() {
+        super.onStop()
+        stopMdns()
+    }
+
+    private fun startMdns() {
+        if (adbMdns == null) {
+            adbMdns = AdbMdns(this, AdbMdns.TLS_PAIRING) { port ->
+                runOnUiThread {
+                    if (port > 0) {
+                        binding.pairingStatus.text =
+                            getString(R.string.notification_adb_pairing_service_found_title) + " ($port)"
+                        val currentPortText = binding.port.editText?.text?.toString()
+                        if (currentPortText.isNullOrEmpty()) {
+                            binding.port.editText?.setText(port.toString())
+                        }
+                    } else {
+                        binding.pairingStatus.text = getString(R.string.dialog_adb_pairing_discovery)
+                    }
+                }
+            }.apply { start() }
         }
     }
 
-    private fun startPairingService() {
-        val intent = AdbPairingService.startIntent(this)
-        try {
-            startForegroundService(intent)
-        } catch (e: Throwable) {
-            Log.e(AppConstants.TAG, "startForegroundService", e)
+    private fun stopMdns() {
+        adbMdns?.stop()
+        adbMdns = null
+    }
 
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S
-                && e is ForegroundServiceStartNotAllowedException
-            ) {
-                val mode = getSystemService(AppOpsManager::class.java)
-                    .noteOpNoThrow("android:start_foreground", android.os.Process.myUid(), packageName, null, null)
-                if (mode == AppOpsManager.MODE_ERRORED) {
-                    Toast.makeText(this, "OP_START_FOREGROUND is denied. What are you doing?", Toast.LENGTH_LONG).show()
+    private fun onPairClicked() {
+        val port = try {
+            binding.port.editText?.text?.toString()?.toInt() ?: -1
+        } catch (e: Exception) {
+            -1
+        }
+        if (port !in 1..65535) {
+            binding.port.error = getString(R.string.dialog_adb_invalid_port)
+            return
+        }
+        binding.port.error = null
+
+        val code = binding.pairingCode.editText?.text?.toString()?.trim() ?: ""
+        if (code.isEmpty()) {
+            binding.pairingCode.error = getString(R.string.dialog_adb_pairing_paring_code)
+            return
+        }
+        binding.pairingCode.error = null
+
+        val imm = getSystemService(INPUT_METHOD_SERVICE) as? InputMethodManager
+        imm?.hideSoftInputFromWindow(binding.root.windowToken, 0)
+
+        binding.pairingProgress.isVisible = true
+        binding.buttonPair.isEnabled = false
+
+        lifecycleScope.launch(Dispatchers.IO) {
+            val host = "127.0.0.1"
+            val key = try {
+                AdbKey(PreferenceAdbKeyStore(ShizukuSettings.getPreferences()), "shizuku")
+            } catch (e: Throwable) {
+                e.printStackTrace()
+                withContext(Dispatchers.Main) {
+                    binding.pairingProgress.isVisible = false
+                    binding.buttonPair.isEnabled = true
+                    Toast.makeText(
+                        this@AdbPairingTutorialActivity,
+                        getString(R.string.adb_error_key_store),
+                        Toast.LENGTH_LONG
+                    ).show()
                 }
-                startService(intent)
+                return@launch
+            }
+
+            val result = runCatching {
+                AdbPairingClient(host, port, code, key).use { client ->
+                    client.start()
+                }
+            }
+
+            withContext(Dispatchers.Main) {
+                binding.pairingProgress.isVisible = false
+                binding.buttonPair.isEnabled = true
+
+                result.onSuccess { success ->
+                    if (success) {
+                        binding.pairingInputContainer.isGone = true
+                        binding.pairingSuccess.isVisible = true
+                        binding.pairingStatus.text = getString(R.string.notification_adb_pairing_succeed_title)
+                    } else {
+                        binding.pairingCode.error = getString(R.string.paring_code_is_wrong)
+                    }
+                }.onFailure { ex ->
+                    when (ex) {
+                        is ConnectException -> {
+                            binding.port.error = getString(R.string.cannot_connect_port)
+                        }
+                        is AdbInvalidPairingCodeException -> {
+                            binding.pairingCode.error = getString(R.string.paring_code_is_wrong)
+                        }
+                        is AdbKeyException -> {
+                            Toast.makeText(
+                                this@AdbPairingTutorialActivity,
+                                getString(R.string.adb_error_key_store),
+                                Toast.LENGTH_LONG
+                            ).show()
+                        }
+                        else -> {
+                            binding.pairingCode.error = ex.localizedMessage ?: getString(R.string.paring_code_is_wrong)
+                        }
+                    }
+                }
             }
         }
     }
